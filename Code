@@ -1,0 +1,241 @@
+
+
+
+
+trainBinaryLGBmodel <- function(modelTable,
+                                targetCol,
+                                varsToModel = setdiff(colnames(modelTable), 
+                                                      c(colnames(modelTable)[modelTable[, lapply(.SD,class)] == "character"])),
+                                varsToExclude = NULL,
+                                params = list(objective = "binary", 
+                                              num_threads = 16),
+                                nrounds = 100,
+                                early_stopping_rounds = 5,
+                                AssignMissing = T,
+                                trainMaxPeriod,
+                                testMinPeriod,
+                                modelName = "",
+                                path = modelResults.path){
+  
+  
+ 
+  #=================================================
+  #Preprocessing
+  #==================================================
+  #saving path for all the results
+  fullModelName <- ifelse(modelName == "", "Model_", modelName)
+  savingPath <- path %+% fullModelName %+% "/"
+  dir.create(savingPath, recursive = T)
+  
+  lgb.unloader(wipe = TRUE)
+  
+  cat("Data loaded has", nrow(modelTable), "rows and", ncol(modelTable), "columns. Preparing data...", fill = T)
+  tic()
+  
+  #prepare vars to model
+  varsToModel <- setdiff(varsToModel, c(targetCol, "Customer_Id", "inTrain", varsToExclude))
+  if(AssignMissing) {modelTable <- assignMissing(modelTable, cols = varsToModel, 0)}
+  
+  #prepare target
+  modelTable[is.na(get(targetCol)), eval(targetCol) := 0]
+  
+  #train adn test
+  modelTable[Date <= trainMaxPeriod, inTrain := 1]
+  modelTable[Date >= testMinPeriod, inTrain := 0]
+  
+  #================================================
+  #LGB fittting
+  #==================================================
+  
+  toc()
+  cat("Converting data to LGB format...", fill = T)
+  tic()
+  lgbd.train <- lgb.Dataset(data.matrix(modelTable[inTrain == 1, c(varsToModel) , with = F]),
+                            label = modelTable[inTrain == 1, get(targetCol)])
+  
+  lgbd.test <- lgb.Dataset(data.matrix(modelTable[inTrain == 0, c(varsToModel) , with = F]),
+                           label = modelTable[inTrain == 0, get(targetCol)])
+  
+  
+  toc()
+  
+  cat("Fitting the LGB model...", fill = T)
+  set.seed <- "2017" 
+  tic()
+  sink(savingPath  %+% "model_train_log.log", split = TRUE)
+  model <- lgb.train(params,
+                     lgbd.train, 
+                     valid = list(train = lgbd.train, test = lgbd.test),
+                     nrounds = nrounds,
+                     early_stopping_rounds = early_stopping_rounds
+  )
+  sink()
+  toc()
+  rm(lgbd.train)
+  gc()
+  
+  
+  #store the model
+  lgb.save(model, savingPath %+% "modelObject")
+  
+
+  
+  #================================================
+  #Performance computing
+  #==================================================
+  cat("Computing performance metrics...", fill = T)
+  
+  #store summary of data used#
+  fwrite(as.data.table(capture.output(glimpse(modelTable))),
+         savingPath %+% "glimpseDataUsed.csv", sep = ";")
+  
+  #store the model
+  cat("Saving model, variables used and parameters...", fill = T)
+  lgb.save(model, savingPath %+% "modelObject")
+  
+  #store the parameters
+  fwrite(params, savingPath %+% "parameters.csv")
+  
+  #store variables used
+  fwrite(data.table(varsToModel = varsToModel), savingPath %+% "varsUsed.csv", 
+         sep = ";")
+  
+  cat("Saving variable importance...")
+  varImp <- lgb.importance(model)
+  fwrite(varImp, savingPath %+% "varImp.csv", sep = ";")
+  
+  
+  cat("Computing predictions...", fill = T)
+  tic()
+  predictions <- predict(model, data = data.matrix(modelTable[inTrain == 0, c(varsToModel), with = F]))
+  toc()
+  
+  rm(lgbd.test)
+  gc()
+  
+  modelTablePreds <- cbind(modelTable[inTrain == 0, c("Customer_Id", "Date",  "targetProd", targetCol, varsToModel), with=F],
+                           predictions)
+  
+  rm(modelTable)
+  gc()
+  
+  #save predictions
+  fwrite(modelTablePreds[,  c("Customer_Id", "Date", targetCol, "predictions"), with=F], savingPath %+% "modelPreds.csv", sep = ";")
+  
+  if("predictions" %in% names(modelTablePreds))
+  {
+    newName <- unique(modelTablePreds[targetBinary == 1]$targetProd)
+    setnames(modelTablePreds, "predictions", newName)
+    allTargets <- newName
+    
+  }
+  
+  cat("All targets is...", allTargets, fill = T)
+  #compute all the model reports
+  computeModelReport(modelTablePreds = modelTablePreds,
+                     varImp = varImp,
+                     allTargets = allTargets,
+                     savingPath = savingPath)
+  
+  #save variable summary pero tranch
+  lgb.unloader(wipe = TRUE)
+  cat(capture.output(toc()), "in preparing the data, fitting the model and saving outputs", fill = T)
+  
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#=================================================
+#function to ony fit models with train
+#==================================================
+onlytrainMultiLGBmodel <- function(modelTable,
+                                   targetCol,
+                                   productCol,
+                                   varsToModel = setdiff(colnames(modelTable), 
+                                                         c(colnames(modelTable)[modelTable[, lapply(.SD,class)] == "character"])),
+                                   varsToExclude = NULL,
+                                   params = list(objective = "multiclass", 
+                                                 num_threads = 32),
+                                   addParams = NULL,
+                                   nrounds = 10,
+                                   AssignMissing = T,
+                                   trainMaxPeriod,
+                                   modelName = "",
+                                   path = modelResults.path){
+  
+  
+  #================================================
+  #Preprocessing
+  #==================================================
+  #saving path for all the results
+  fullModelName <- ifelse(modelName == "", "Model_", modelName) %+% format(Sys.time(), "%Y%m%d_%I%p")
+  savingPath <- path %+% fullModelName %+% "/"
+  dir.create(savingPath, recursive = T)
+  
+  lgb.unloader(wipe = TRUE)
+  
+  cat("Data loaded has", nrow(modelTable), "rows and", ncol(modelTable), "columns. Preparing data...", fill = T)
+  tic()
+  
+  #prepare vars to model
+  varsToModel <- setdiff(varsToModel, c(targetCol, "Customer_Id", "inTrain", varsToExclude))
+  if(AssignMissing) {modelTable <- assignMissing(modelTable, cols = varsToModel, 0)}
+  
+  #prepare target
+  modelTable[is.na(get(targetCol)), eval(targetCol) := 0]
+  modelTable[get(targetCol) == 0, eval(productCol) := "NoBuy"]
+  
+  if(params$objective == "multiclass") { 
+    params$num_class = max(as.numeric(modelTable[, get(targetCol)]))+1}
+  
+
+  #================================================
+  #LGB fittting
+  #==================================================
+  
+  toc()
+  cat("Converting data to LGB format...", fill = T)
+  tic()
+  lgbd.train <- lgb.Dataset(data.matrix(modelTable[, c(varsToModel) , with = F]),
+                            label = modelTable[, get(targetCol)])
+  toc()
+  
+  #we can now remove the training set to free space
+  rm(modelTable)
+  
+  #fit the model
+  cat("Fitting the LGB model...", fill = T)
+  set.seed <- "2017" 
+  tic()
+  sink(savingPath  %+% "model_train_log.log", split = TRUE)
+  model <- lgb.train(params,
+                     lgbd.train, 
+                     nrounds = nrounds
+  )
+  sink()
+  toc()
+  
+  #store the model
+  lgb.save(model, savingPath %+% "modelObject")
+  
+   #save variable summary pero tranch
+  lgb.unloader(wipe = TRUE)
+  cat(capture.output(toc()), "in preparing the data, fitting the model and saving outputs", fill = T)
+}  
+
