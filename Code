@@ -1,7 +1,3 @@
-
-
-
-
 trainBinaryLGBmodel <- function(modelTable,
                                 targetCol,
                                 varsToModel = setdiff(colnames(modelTable), 
@@ -16,8 +12,6 @@ trainBinaryLGBmodel <- function(modelTable,
                                 testMinPeriod,
                                 modelName = "",
                                 path = modelResults.path){
-  
-  
  
   #=================================================
   #Preprocessing
@@ -77,8 +71,6 @@ trainBinaryLGBmodel <- function(modelTable,
   
   #store the model
   lgb.save(model, savingPath %+% "modelObject")
-  
-
   
   #================================================
   #Performance computing
@@ -142,24 +134,6 @@ trainBinaryLGBmodel <- function(modelTable,
   cat(capture.output(toc()), "in preparing the data, fitting the model and saving outputs", fill = T)
   
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #=================================================
 #function to ony fit models with train
@@ -238,4 +212,3 @@ onlytrainMultiLGBmodel <- function(modelTable,
   lgb.unloader(wipe = TRUE)
   cat(capture.output(toc()), "in preparing the data, fitting the model and saving outputs", fill = T)
 }  
-
